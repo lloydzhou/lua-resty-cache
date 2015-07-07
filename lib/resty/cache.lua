@@ -86,9 +86,9 @@ function _M.new(_, lockname, cache, fallback, status, methods, age, stale, heade
         status=status or {ngx.HTTP_OK}, methods=methods or {"GET", "HEAD"},
         age=age or 120, stale=stale or 100, header=header}, mt)
 end
-function _M.run(self)
+function _M.run(self, key)
     if find(ngx.var.request_method, self.methods) then
-        get(self, ngx.md5(ngx.var.request_uri), nil)
+        get(self, key or ngx.md5(ngx.var.request_uri), nil)
     end
 end
 
