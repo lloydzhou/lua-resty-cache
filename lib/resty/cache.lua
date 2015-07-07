@@ -62,7 +62,7 @@ function get(self, key, l)
         {"HGET", key, "body"}})
     local res = parser.parse_replies(response.body, 4)
     local ttl = tonumber(res[1][1])
-    if not (res == nil) and (#res == 4) and ttl > -2 then
+    if not (res == nil) and (#res == 4) and ttl > -1 then
         ngx.log(loglevel, "[LUA] cache hit on cache key: ", key, ", TTL: ", ttl)
         out(res[2][1], json.decode(res[3][1]), res[4][1], self.header, ttl <= self.stale and "STALE" or "HIT")
         if l then l:unlock() end
