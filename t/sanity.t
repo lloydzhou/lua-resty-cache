@@ -29,8 +29,9 @@ __DATA__
 --- http_config eval: $::HttpConfig
 --- config
     location = /t {
+        set_md5 $key $http_user_agent|$request_uri;
         content_by_lua '
-        require("resty.cache"):new("cache_locks", "/redis", "/fallback", nil, nil, 10, 10, "X-Cache"):run()
+            require("resty.cache"):new("cache_locks", "/redis", "/fallback", nil, nil, 10, 10, "X-Cache"):run(ngx.var.key)
         ';
     }
 
