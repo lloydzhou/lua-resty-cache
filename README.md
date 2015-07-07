@@ -9,6 +9,7 @@ http cache to redis, can server stale response, and using "lua-resty-lock" only 
 
 ## Synopsis
 
+    lua_shared_dict cache_locks 1m;
     location / {
         set_md5 $key $http_user_agent|$request_uri;
         content_by_lua '
