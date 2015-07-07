@@ -30,8 +30,7 @@ __DATA__
 --- config
     location = /t {
         content_by_lua '
-        local cache = require "resty.cache"
-        cache:new("cache_locks", "/redis", "/fallback", nil, nil, 10, 10, "X-Cache"):run()
+        require("resty.cache"):new("cache_locks", "/redis", "/fallback", nil, nil, 10, 10, "X-Cache"):run()
         ';
     }
 
