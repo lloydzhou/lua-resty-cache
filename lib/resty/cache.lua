@@ -35,10 +35,11 @@ local out = function(status, headers, body, cache_header, cache_status)
 end
 local cache = function(self, key, output, l)
     local response = ngx.location.capture(self.fallback .. ngx.var.request_uri)
+    local store = find(response.status, self.status)
     if output then
-        out(response.status, response.header, response.body, self.header, "STORE")
+        out(response.status, response.header, response.body, self.header, store and "STORE" or "SKIP")
     end
-    if find(response.status, self.status) then
+    if store then
         local exp_header, cache_control = response.header['Expire'], response.header['Cache-Control']
         local t = exp_header and ngx.parse_http_time(exp_header) - ngx.now()
         if cache_control then
