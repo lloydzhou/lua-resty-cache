@@ -50,9 +50,9 @@ local cache = function(self, key, output, l)
             {"HMSET", key, "status", response.status, "headers", json.encode(response.header), "body", response.body},
             {"EXPIRE", key, (t or self.age) + self.stale},
             {"EXEC"}})
-        if l then l:unlock() end
         ngx.log(loglevel, "[LUA] cache store on cache key: ", key)
     end
+    if l then l:unlock() end
 end
 function get(self, key, l)
     local response = query(self.cache, {
