@@ -34,8 +34,9 @@ local out = function(status, headers, body, cache_header, cache_status)
     ngx.eof()
 end
 local cache = function(self, key, output, l)
-    local response = ngx.location.capture(self.fallback .. ngx.var.request_uri)
-    local store = find(response.status, self.status)
+    if find(ngx.var.request_method, {"POST", "PUT"}) then ngx.req.read_body() end
+    local response = ngx.location.capture(self.fallback .. ngx.var.request_uri, {method=ngx["HTTP_" .. ngx.var.request_method], share_all_vars=true, always_forward_body=true})
+    local store = l and find(response.status, self.status)
     if output then
         out(response.status, response.header, response.body, self.header, store and "STORE" or "SKIP")
     end
@@ -90,6 +91,8 @@ end
 function _M.run(self, key)
     if find(ngx.var.request_method, self.methods) then
         get(self, key or ngx.md5(ngx.var.request_uri), nil)
+    else
+        cache(self, key, true)
     end
 end
 
