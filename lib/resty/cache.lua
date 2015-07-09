@@ -72,7 +72,7 @@ function get(self, key, l)
             ngx.log(loglevel, "[LUA] cache stale on cache key: ", key, ", TTL: ", ttl)
             l = lock:new(self.lockname, {timeout=0.01})
             if l:lock(key) then cache(self, key, false, l) end
-        end
+        else ngx.req.discard_body() end
     else
         if l then cache(self, key, true, l) else
             l = lock:new(self.lockname, {timeout=3})
