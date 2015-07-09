@@ -17,6 +17,21 @@ http cache to redis, can server stale response, and using "lua-resty-lock" only 
         ';
     }
 
+    location / {
+        # define the params to ngx.var
+        set $cache_lock cache_locks;
+        set $cache_pass /redis;
+        set $cache_backend /fallback;
+        set $cache_status "200 405 ";
+        set $cache_method "GET POST ";
+        set $cache_age 120;
+        set $cache_stale 100;
+        set $cache_header "X-Cache";
+        set_md5 $cache_key $request_method:$http_user_agent:$request_uri;
+        # just run lua file.
+        content_by_lua_file /usr/local/openresty/lualib/resty/cache.lua;
+    }
+
     location /fallback {
         rewrite ^/fallback/(.*) /$1 break;
         proxy_set_header Host $http_host;

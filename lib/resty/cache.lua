@@ -7,7 +7,7 @@ local mt = {__index = _M}
 local loglevel = ngx.NOTICE
 local find = function(value, list)
     for _, v in pairs(list) do
-        if v == value then return true end
+        if tostring(v) == tostring(value) then return true end
     end
     return false
 end
@@ -35,7 +35,7 @@ local out = function(status, headers, body, cache_header, cache_status)
 end
 local cache = function(self, key, output, l)
     if find(ngx.var.request_method, {"POST", "PUT"}) then ngx.req.read_body() end
-    local response = ngx.location.capture(self.fallback .. ngx.var.request_uri, {method=ngx["HTTP_" .. ngx.var.request_method], share_all_vars=true, always_forward_body=true})
+    local response = ngx.location.capture(self.backend .. ngx.var.request_uri, {method=ngx["HTTP_" .. ngx.var.request_method], share_all_vars=true, always_forward_body=true})
     local store = l and find(response.status, self.status)
     if output then
         out(response.status, response.header, response.body, self.header, store and "STORE" or "SKIP")
@@ -47,7 +47,7 @@ local cache = function(self, key, output, l)
             local _, _, _, age = string.find(cache_control, "(.*):(.*)")
             t = age and tonumber(age)
         end
-        query(self.cache, {
+        query(self.cache_pass, {
             {"MULTI"},
             {"HMSET", key, "status", response.status, "headers", json.encode(response.header), "body", response.body},
             {"EXPIRE", key, (t or self.age) + self.stale},
@@ -57,7 +57,7 @@ local cache = function(self, key, output, l)
     if l then l:unlock() end
 end
 function get(self, key, l)
-    local response = query(self.cache, {
+    local response = query(self.cache_pass, {
         {"TTL", key},
         {"HGET", key, "status"},
         {"HGET", key, "headers"},
@@ -81,12 +81,15 @@ function get(self, key, l)
     end
 end
 ---------------------------------
-function _M.new(_, lockname, cache, fallback, status, methods, age, stale, header)
+function string.split(str) return {str:match((str:gsub("[^ ]* ", "([^ ]*) ")))} end
+function _M.new(_, lockname, cache_pass, backend, status, methods, age, stale, header)
     return setmetatable({
-        lockname=lockname,
-        cache=cache, fallback=fallback,
-        status=status or {ngx.HTTP_OK}, methods=methods or {"GET", "HEAD"},
-        age=age or 120, stale=stale or 100, header=header}, mt)
+        lockname=lockname, cache_pass=cache_pass, backend=backend,
+        status=status or (ngx.var.cache_status and ngx.var.cache_status:split()) or {ngx.HTTP_OK},
+        methods=methods or (ngx.var.cache_method and ngx.var.cache_method:split()) or {"GET", "HEAD"},
+        age=age or tonumber(ngx.var.cache_age) or 120,
+        stale=stale or tonumber(ngx.var.cache_stale) or 100,
+        header=header or ngx.var.cache_header}, mt)
 end
 function _M.run(self, key)
     if find(ngx.var.request_method, self.methods) then
@@ -95,6 +98,8 @@ function _M.run(self, key)
         cache(self, key, true)
     end
 end
-
+if ngx.var.cache_lock and ngx.var.cache_pass and ngx.var.cache_backend and ngx.var.cache_key then
+    _M.new({}, ngx.var.cache_lock, ngx.var.cache_pass, ngx.var.cache_backend):run(ngx.var.cache_key)
+end
 return _M
 
