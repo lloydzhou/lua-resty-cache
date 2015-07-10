@@ -1,7 +1,6 @@
 local parser = require "redis.parser"
 local json = require "cjson"
 local lock = require "resty.lock"
-
 local _M = { _VERSION = '0.1'  }
 local mt = {__index = _M}
 local loglevel = ngx.NOTICE
@@ -29,8 +28,9 @@ local out = function(status, headers, body, cache_header, cache_status)
     if cache_header then
         ngx.header[cache_header] = cache_status or ""
     end
-    ngx.status = tonumber(status)
-    ngx.print(body)
+    local skip = ngx.req.get_headers()["If-None-Match"] ==  ngx.header.etag
+    ngx.status = skip and 304 or tonumber(status)
+    ngx.print(not skip and body or '')
     ngx.eof()
 end
 local cache = function(self, key, output, l)
