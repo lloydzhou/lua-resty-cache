@@ -5,14 +5,19 @@ use Cwd qw(cwd);
 
 repeat_each(2);
 
-plan tests => repeat_each() * (blocks() * 3);
+plan tests => repeat_each() * (blocks() * 4);
 
 my $pwd = cwd();
 
 our $HttpConfig = qq{
-    lua_package_path "$pwd/lib/?.lua;;";
-    lua_package_cpath "/usr/local/openresty-debug/lualib/?.so;/usr/local/openresty/lualib/?.so;;";
-    lua_shared_dict cache_locks 100k;
+    lua_shared_dict srcache_locks 100k;
+    upstream www {
+        server 127.0.0.1:9999;
+    }
+    upstream redis {
+        server 127.0.0.1:6379;
+        keepalive 1024;
+    }
 };
 
 $ENV{TEST_NGINX_RESOLVER} = '8.8.8.8';
@@ -25,47 +30,64 @@ run_tests();
 
 __DATA__
 
-=== TEST 1: lock is subject to garbage collection
+=== TEST 1: lock is subject to garbage collection 
 --- http_config eval: $::HttpConfig
 --- config
-    location = /t {
-        set_md5 $key $http_user_agent|$request_uri;
-        content_by_lua '
-            require("resty.cache"):new("cache_locks", "/redis", "/fallback", nil, nil, 10, 10, "X-Cache"):run(ngx.var.key)
-        ';
+    location /t {
+        default_type application/json;
+
+        set $cache_lock srcache_locks;
+        set $cache_ttl /redisttl;
+        set $cache_persist /redispersist;
+        set $cache_key "$http_user_agent|$uri";
+        set $cache_stale 100;
+        set $cache_locktime 3;
+        set $cache_skip_fetch "X-Skip-Fetch";
+        set_escape_uri $escaped_key $cache_key;
+        rewrite_by_lua_file "../../lib/resty/cache.lua";
+
+        if ($http_x_skip_fetch != TRUE){ srcache_fetch GET /redis $cache_key;}
+        srcache_store PUT /redis2 key=$escaped_key&exptime=105;
+        add_header X-Cache $srcache_fetch_status;
+        add_header X-Store $srcache_store_status;
+        echo hello world;
+        #proxy_pass http://www;
     }
 
-    location /fallback {
-
-        rewrite ^/fallback/(.*) /$1 break;
-        proxy_set_header Host $http_host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_redirect off;
-
-        # send request to the backend
-        proxy_pass http://127.0.0.1:9999;
-        #echo hello world!!!;
-    }
-    location /redis {
+    location = /redisttl {
         internal;
-        default_type text/html;
-        # number of redis commands
-        set_unescape_uri $n $arg_n;
-        # we need to read body explicitly here...or $echo_request_body will evaluate to empty ("")
-        echo_read_request_body;
-        redis2_raw_queries $n "$echo_request_body\r\n";
-        redis2_connect_timeout 200ms;
-        redis2_send_timeout 200ms;
-        redis2_read_timeout 200ms;
-        redis2_pass 127.0.0.1:6379;
-        error_page 500 501 502 503 504 505 @empty_string;
+        set_unescape_uri $key $arg_key;
+        set_md5 $key;
+        redis2_query ttl $key;
+        redis2_pass redis;
     }
-	location @empty_string {echo "";}
+    location = /redispersist {
+        internal;
+        set_unescape_uri $key $arg_key;
+        set_md5 $key;
+        redis2_query persist $key;
+        redis2_pass redis;
+    }
+    location = /redis {
+        internal;
+
+        set_md5 $redis_key $args;
+        redis_pass redis;
+    }
+    location = /redis2 {
+        internal;
+        set_unescape_uri $exptime $arg_exptime;
+        set_unescape_uri $key $arg_key;
+        set_md5 $key;
+        redis2_query set $key $echo_request_body;
+        redis2_query expire $key $exptime;
+        redis2_pass redis;
+    }
 --- request
 GET /t
 --- response_headers
-Content-Type: text/html; charset=UTF-8
+X-Cache: HIT
+X-Store: BYPASS
 --- no_error_log
 [error]
 

@@ -4,7 +4,7 @@ local http, parser, lock = require "resty.http", require "redis.parser", require
 
 local _M = { _VERSION = '0.2'  }
 local mt = {__index = _M}
-local loglevel = ngx.ERR
+local loglevel = ngx.NOTICE
 local stuf, off = "_", "off"
 
 function _M.new(_, o)
