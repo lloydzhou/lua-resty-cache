@@ -33,7 +33,7 @@ __DATA__
 === TEST 1: lock is subject to garbage collection 
 --- http_config eval: $::HttpConfig
 --- config
-    location /t {
+    location /live/homepage {
         default_type application/json;
 
         set $cache_lock srcache_locks;
@@ -41,7 +41,10 @@ __DATA__
         set $cache_persist /redispersist;
         set $cache_key "$http_user_agent|$uri";
         set $cache_stale 100;
-        set $cache_locktime 3;
+        set $cache_lock_exptime 30;
+        set $cache_backend_lock_timeout 0.01;
+        set $cache_lock_timeout 3;
+        set $cache_lock_timeout_wait 0.06;
         set $cache_skip_fetch "X-Skip-Fetch";
         set_escape_uri $escaped_key $cache_key;
         rewrite_by_lua_file "../../lib/resty/cache.lua";
@@ -84,7 +87,7 @@ __DATA__
         redis2_pass redis;
     }
 --- request
-GET /t
+GET /live/homepage
 --- response_headers
 X-Cache: HIT
 X-Store: BYPASS

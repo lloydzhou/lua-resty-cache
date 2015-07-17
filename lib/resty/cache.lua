@@ -7,9 +7,9 @@ local mt = {__index = _M}
 local loglevel = ngx.NOTICE
 local stuf, off = "_", "off"
 
-local request = function(p, http, uri, method, headers, body, cache_skip_fetch)
+local request = function(p, http, port, uri, method, headers, body, cache_skip_fetch)
     headers[cache_skip_fetch] = "TRUE" -- set header force to create new cache.
-    http:new():request({ url="http://127.0.0.1" .. uri, method=method, headers=headers, body=body})
+    http:new():request({ url="http://127.0.0.1:" .. port .. uri, method=method, headers=headers, body=body})
     ngx.log(loglevel, "[LUA], success to update new cache, uri: ", uri, ", method: ", method)
 end
 
@@ -45,7 +45,7 @@ function _M.run(self)
             local t, e = l:lock(key)
             if t and t < self.cache_lock_timeout_wait then
                 -- only one case to update new cache, and release the lock on the end: get the lock as soon as possible.
-                request(0, http, ngx.var.request_uri, method, ngx.req.get_headers(), ngx.req.get_body_data(), self.cache_skip_fetch)
+                request(0, http, ngx.var.server_port, ngx.var.request_uri, method, ngx.req.get_headers(), ngx.req.get_body_data(), self.cache_skip_fetch)
             end
             l:unlock()
         else
@@ -56,7 +56,7 @@ function _M.run(self)
             local l = lock:new(self.cache_lock, {exptime=self.cache_lock_exptime, timeout=self.cache_backend_lock_timeout})
             if l and l:lock(key) then
                 -- run a backend task, to update new cache, no need to release the lock, will retry after "exptime".
-                ngx.timer.at(0, request, http, ngx.var.request_uri, method, ngx.req.get_headers(), ngx.req.get_body_data(), self.cache_skip_fetch)
+                ngx.timer.at(0, request, http, ngx.var.server_port, ngx.var.request_uri, method, ngx.req.get_headers(), ngx.req.get_body_data(), self.cache_skip_fetch)
             end
         end
     end
