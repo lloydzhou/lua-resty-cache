@@ -1,105 +1,60 @@
-local parser = require "redis.parser"
-local json = require "cjson"
-local lock = require "resty.lock"
+-- Copyright (C) 2015 Lloyd Zhou
 
-local _M = { _VERSION = '0.1'  }
+local http, parser, lock = require "resty.http", require "redis.parser", require "resty.lock"
+
+local _M = { _VERSION = '0.2'  }
 local mt = {__index = _M}
-local loglevel = ngx.NOTICE
-local find = function(value, list)
-    for _, v in pairs(list) do
-        if tostring(v) == tostring(value) then return true end
-    end
-    return false
-end
-local query = function(cache, queries)
-    local raw = {}
-    for i, q in ipairs(queries) do
-        table.insert(raw, parser.build_query(q))
-    end
-    local response = ngx.location.capture(cache, {method=ngx.HTTP_POST, args={n=#raw}, body=table.concat(raw, "")})
-    if response.status ~= 200 or not response.body then
-        ngx.log(loglevel, "[LUA] failed to query redis data")
-    end
-    return response
-end
-local out = function(status, headers, body, cache_header, cache_status)
-    for n, v in pairs(headers or {}) do
-        ngx.header[n] = v
-    end
-    if cache_header then
-        ngx.header[cache_header] = cache_status or ""
-    end
-    ngx.status = tonumber(status)
-    ngx.print(body)
-    ngx.eof()
-end
-local cache = function(self, key, output, l)
-    if find(ngx.var.request_method, {"POST", "PUT"}) then ngx.req.read_body() end
-    local response = ngx.location.capture(self.backend .. ngx.var.request_uri, {method=ngx["HTTP_" .. ngx.var.request_method], share_all_vars=true, always_forward_body=true})
-    local store = l and find(response.status, self.status)
-    if output then
-        out(response.status, response.header, response.body, self.header, store and "STORE" or "SKIP")
-    end
-    if store then
-        local exp_header, cache_control = response.header['Expire'], response.header['Cache-Control']
-        local t = exp_header and ngx.parse_http_time(exp_header) - ngx.now()
-        if cache_control then
-            local _, _, _, age = string.find(cache_control, "(.*):(.*)")
-            t = age and tonumber(age)
+local loglevel = ngx.ERR
+local stuf, off = "_", "off"
+
+function _M.new(_, o)
+    local self, default = {}, {cache_lock=stuf, cache_ttl=stuf, cache_key=stuf,
+        cache_persist=off,
+        cache_stale=100, cache_locktime=30, cache_skip_fetch='X-Skip-Fetch'}
+    for k,v in pairs(default) do
+        self[k] = o[k] and (string.find(o[k], "^(%d+)$") and tonumber(o[k]) or o[k]) or v
+        if stuf == self[k] then
+            ngx.log(loglevel, "missing option name: ", k)
         end
-        query(self.cache_pass, {
-            {"MULTI"},
-            {"HMSET", key, "status", response.status, "headers", json.encode(response.header), "body", response.body},
-            {"EXPIRE", key, (t or self.age) + self.stale},
-            {"EXEC"}})
-        ngx.log(loglevel, "[LUA] cache store on cache key: ", key)
     end
-    if l then l:unlock() end
+    return setmetatable(self, mt)
 end
-function get(self, key, l)
-    local response = query(self.cache_pass, {
-        {"TTL", key},
-        {"HGET", key, "status"},
-        {"HGET", key, "headers"},
-        {"HGET", key, "body"}})
-    local res = parser.parse_replies(response.body, 4)
-    local ttl = tonumber(res[1][1])
-    if not (res == nil) and (#res == 4) and ttl > -1 then
-        ngx.log(loglevel, "[LUA] cache hit on cache key: ", key, ", TTL: ", ttl)
-        out(res[2][1], json.decode(res[3][1]), res[4][1], self.header, ttl <= self.stale and "STALE" or "HIT")
-        if l then l:unlock() end
-        if ttl < self.stale then
-            ngx.log(loglevel, "[LUA] cache stale on cache key: ", key, ", TTL: ", ttl)
-            l = lock:new(self.lockname, {timeout=0.01})
-            if l:lock(key) then cache(self, key, false, l) end
-        else ngx.req.discard_body() end
-    else
-        if l then cache(self, key, true, l) else
-            l = lock:new(self.lockname, {timeout=3})
-            if l:lock(key) then get(self, key, l) end
+function _M.run(self)
+    local skip = ngx.var[self.cache_skip_fetch:lower():gsub("-", "_")]
+    local uri = string.gsub(ngx.var.request_uri, "?.*", "")
+    if skip or self.cache_ttl == uri or self.cache_persist == uri then return end
+    local key, method, stale = self.cache_key, ngx.var.request_method, self.cache_stale
+    local res = ngx.location.capture(self.cache_ttl, { args={key=key}})
+    local ttl = parser.parse_reply(res.body)
+    ngx.log(loglevel, "[LUA], cache key", key, ", ttl: ", ttl)
+    -- stale time, need update the cache
+    if ttl < stale then
+        -- cache missing, no need to using srcache_fetch, go to backend server, and store new cache
+        -- if redis server version is 2.8- can not return -2 !!!!!!
+        if ttl > -2 then
+            -- option: remove expire time for key
+            if self.cache_persist ~= off and ttl > 0 then
+                ngx.location.capture(self.cache_persist, { args={ key=key } })
+            end
+            -- get a lock, if success, do not fetch cache, create new one, the lock will release in "exptime".
+            -- if can not get the lock, just using the stale data from redis.
+            local l = lock:new(self.cache_lock, {exptime=self.cache_locktime, timeout=0.01})
+            if l and l:lock(key) then
+                local func = function(p, http, uri, method, headers, body)
+                    headers[self.cache_skip_fetch] = "TRUE" -- set header force to create new cache.
+                    http:new():request({ url="http://127.0.0.1" .. uri, method=method, headers=headers, body=body})
+                    ngx.log(loglevel, "[LUA], success to update new cache, uri: ", uri, ", method: ", method)
+                end
+                -- run a backend task, to update new cache
+                if method == "POST" or method == "PUT" then ngx.req.read_body() end
+                ngx.timer.at(0, func, http, ngx.var.request_uri, method, ngx.req.get_headers(), ngx.req.get_body_data())
+            end
         end
     end
 end
----------------------------------
-function string.split(str) return {str:match((str:gsub("[^ ]* ", "([^ ]*) ")))} end
-function _M.new(_, lockname, cache_pass, backend, status, methods, age, stale, header)
-    return setmetatable({
-        lockname=lockname, cache_pass=cache_pass, backend=backend,
-        status=status or (ngx.var.cache_status and ngx.var.cache_status:split()) or {ngx.HTTP_OK},
-        methods=methods or (ngx.var.cache_method and ngx.var.cache_method:split()) or {"GET", "HEAD"},
-        age=age or tonumber(ngx.var.cache_age) or 120,
-        stale=stale or tonumber(ngx.var.cache_stale) or 100,
-        header=header or ngx.var.cache_header}, mt)
-end
-function _M.run(self, key)
-    if find(ngx.var.request_method, self.methods) then
-        get(self, key or ngx.md5(ngx.var.request_uri), nil)
-    else
-        cache(self, key, true)
-    end
-end
-if ngx.var.cache_lock and ngx.var.cache_pass and ngx.var.cache_backend and ngx.var.cache_key then
-    _M.new({}, ngx.var.cache_lock, ngx.var.cache_pass, ngx.var.cache_backend):run(ngx.var.cache_key)
+
+if ngx.var.cache_lock and ngx.var.cache_ttl and ngx.var.cache_key then
+    _M.new(nil, ngx.var):run()
 end
 return _M
 
