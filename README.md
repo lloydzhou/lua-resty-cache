@@ -1,7 +1,7 @@
 # lua-resty-cache
-http cache to redis, can server stale response, and using "lua-resty-lock" only allow one request to populate a new cache
+one lua library to work with srcache, can server stale response, and using "lua-resty-lock" only allow one request to populate a new cache.
 
-1. if the cache is missing, using lua-resty-lock to make one request to populate a new cache. the other request just wait the cache and using this new cache send to client.
+1. if the cache is missing, skip the srcache_fetch, and using lua-resty-lock to make one request to populate a new cache. the other request just wait the cache and using this new cache send to client.
 2. always set the redis expires to (real expires time + stale time), so can find the stale data from reids.
 3. if get stale data from redis, just send stale data to client(using ngx.eof(), the client can close this connection.)
 4. and then make subrequest to populate a new cache (using lua-resty-lock, so only one request send to backend server).
@@ -9,53 +9,58 @@ http cache to redis, can server stale response, and using "lua-resty-lock" only 
 
 ## Synopsis
 
-    lua_shared_dict cache_locks 1m;
-    location / {
-        set_md5 $key $http_user_agent|$request_uri;
-        content_by_lua '
-            require("resty.cache"):new("cache_locks", "/redis", "/fallback", nil, nil, 10, 10, "X-Cache"):run(ngx.var.key)
-        ';
+    upstream www {
+        server 127.0.0.1:9999;
     }
-
-    location / {
-        # define the params to ngx.var
-        set $cache_lock cache_locks;
-        set $cache_pass /redis;
-        set $cache_backend /fallback;
-        set $cache_status "200 405 ";
-        set $cache_method "GET POST ";
-        set $cache_age 120;
+    upstream redis {
+        server 127.0.0.1:6379;
+        keepalive 1024;
+    }
+    lua_shared_dict srcache_locks 1m;
+    location /api {
+        set $cache_lock srcache_locks;
+        set $cache_ttl /redisttl;
+        set $cache_persist /redispersist;
+        set $cache_key "$http_user_agent|$uri";
         set $cache_stale 100;
-        set $cache_header "X-Cache";
-        set_md5 $cache_key $request_method:$http_user_agent:$request_uri;
-        # just run lua file.
-        content_by_lua_file /usr/local/openresty/lualib/resty/cache.lua;
+        set $cache_locktime 3;
+        set $cache_skip_fetch "X-Skip-Fetch";
+        set_escape_uri $escaped_key $cache_key;
+        
+        rewrite_by_lua_file /usr/local/openresty/lualib/resty/cache.lua;
+        
+        if ($http_x_skip_fetch != TRUE){ srcache_fetch GET /redis $cache_key;}
+        srcache_store PUT /redis2 key=$escaped_key&exptime=105;
+        add_header X-Cache $srcache_fetch_status;
+        add_header X-Store $srcache_store_status;
+        #echo hello world;
+        proxy_pass http://www;
     }
-
-    location /fallback {
-        rewrite ^/fallback/(.*) /$1 break;
-        proxy_set_header Host $http_host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_redirect off;
-
-        # send request to the backend
-        proxy_pass http://127.0.0.1:9999;
-        #echo hello world!!!;
-    }
-
-    location /redis {
+    location = /redisttl {
         internal;
-        default_type text/html;
-        # number of redis commands
-        set_unescape_uri $n $arg_n;
-        # we need to read body explicitly here...or $echo_request_body will evaluate to empty ("")
-        echo_read_request_body;
-        redis2_raw_queries $n "$echo_request_body\r\n";
-        redis2_connect_timeout 200ms;
-        redis2_send_timeout 200ms;
-        redis2_read_timeout 200ms;
-        redis2_pass 127.0.0.1:6379;
-        error_page 500 501 502 503 504 505 @empty_string;
+        set_unescape_uri $key $arg_key;
+        set_md5 $key;
+        redis2_query ttl $key;
+        redis2_pass redis;
     }
-    location @empty_string {echo "";}
+    location = /redispersist {
+        internal;
+        set_unescape_uri $key $arg_key;
+        set_md5 $key;
+        redis2_query persist $key;
+        redis2_pass redis;
+    }
+    location = /redis {
+        internal;
+        set_md5 $redis_key $args;
+        redis_pass redis;
+    }
+    location = /redis2 {
+        internal;
+        set_unescape_uri $exptime $arg_exptime;
+        set_unescape_uri $key $arg_key;
+        set_md5 $key;
+        redis2_query set $key $echo_request_body;
+        redis2_query expire $key $exptime;
+        redis2_pass redis;
+    }
