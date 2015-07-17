@@ -1,7 +1,7 @@
 # lua-resty-cache
 one lua library to work with srcache, can server stale response, and using "lua-resty-lock" only allow one request to populate a new cache.
 
-1. if the cache is missing, skip the srcache_fetch, and populate a new cache.
+1. if the cache is missing, skip the srcache_fetch, and make single request to populate a new cache, the other request with same cache_key, just wait update cache success.
 2. always set the redis expires to (real expires time + stale time), so can find the stale data from reids.
 3. if get stale data from redis, just send stale data to client(using ngx.eof(), the client can close this connection.)
 4. and then make subrequest to populate a new cache (using lua-resty-lock, so only one request send to backend server).
