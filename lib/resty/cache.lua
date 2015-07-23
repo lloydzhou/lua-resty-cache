@@ -15,8 +15,8 @@ end
 
 function _M.new(_, o)
     local self, default = {}, {cache_lock=stuf, cache_ttl=stuf, cache_key=stuf,
-        cache_persist=off,
-        cache_stale=100, cache_lock_exptime=30, cache_skip_fetch='X-Skip-Fetch',
+        cache_persist=off, cache_methods="GET",
+        cache_stale=100, cache_lock_exptime=30, cache_skip_fetch="X-Skip-Fetch",
         cache_backend_lock_timeout=0.01, cache_lock_timeout=3, cache_lock_timeout_wait=0.06}
     for k,v in pairs(default) do
         self[k] = o[k] and (string.find(o[k], "^([%d.]+)$") and tonumber(o[k]) or o[k]) or v
@@ -29,8 +29,8 @@ end
 function _M.run(self)
     local skip = ngx.var["http_" .. self.cache_skip_fetch:lower():gsub("-", "_")]
     local uri = string.gsub(ngx.var.request_uri, "?.*", "")
-    if skip or self.cache_ttl == uri or self.cache_persist == uri then return end
     local key, method, stale = self.cache_key, ngx.var.request_method, self.cache_stale
+    if skip or self.cache_ttl == uri or self.cache_persist == uri or self.cache_methods:find(method) then return end
     local res = ngx.location.capture(self.cache_ttl, { args={key=key}})
     local ttl = parser.parse_reply(res.body)
     -- ngx.log(loglevel, "[LUA], cache key", key, ", ttl: ", ttl)
