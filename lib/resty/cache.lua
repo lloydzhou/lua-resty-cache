@@ -30,7 +30,7 @@ function _M.run(self)
     local skip = ngx.var["http_" .. self.cache_skip_fetch:lower():gsub("-", "_")]
     local uri = string.gsub(ngx.var.request_uri, "?.*", "")
     local key, method, stale = self.cache_key, ngx.var.request_method, self.cache_stale
-    if skip or self.cache_ttl == uri or self.cache_persist == uri or self.cache_methods:find(method) then return end
+    if skip or self.cache_ttl == uri or self.cache_persist == uri or not self.cache_methods:find(method) then return end
     local res = ngx.location.capture(self.cache_ttl, { args={key=key}})
     local ttl = parser.parse_reply(res.body)
     -- ngx.log(loglevel, "[LUA], cache key", key, ", ttl: ", ttl)
