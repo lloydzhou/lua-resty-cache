@@ -7,6 +7,12 @@ one lua library to work with srcache, can server stale response, and using "lua-
 4. and then make subrequest to populate a new cache (using lua-resty-lock, so only one request send to backend server).
 
 
+## Install
+
+    git clone --branch feature-srcache --recursive https://github.com/lloydzhou/lua-resty-cache
+    cd lua-resty-cache && sudo make install
+
+
 ## Synopsis
 
     upstream www {
