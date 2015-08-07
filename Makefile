@@ -12,6 +12,7 @@ all: ;
 install: all
 	$(INSTALL) -d $(LUA_LIB_DIR)/resty
 	$(INSTALL) lib/resty/*.lua $(LUA_LIB_DIR)/resty/
+	$(INSTALL) http/lib/resty/*.lua $(LUA_LIB_DIR)/resty/
 
 
 test:
