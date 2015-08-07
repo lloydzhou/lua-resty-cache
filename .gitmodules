@@ -1,0 +1,3 @@
+[submodule "http"]
+	path = http
+	url = https://github.com/liseen/lua-resty-http
